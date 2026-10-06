@@ -1,0 +1,996 @@
+{
+  "schema_version": "1.0",
+  "title": "Hourly equipment health with delayed and corrected readings",
+  "seed": 42,
+  "task_kind": "analysis",
+  "decisions": [
+    {
+      "key": "objective",
+      "value": "Correct hourly equipment-health averages and late-reading inclusion.",
+      "status": "confirmed",
+      "source": "User prompt",
+      "impact": "Business outcome.",
+      "severity": "requirements",
+      "bindings": {}
+    },
+    {
+      "key": "deliverable",
+      "value": "Databricks-ready PySpark pipeline notebook with plans, checks, and distributed execution explanations.",
+      "status": "confirmed",
+      "source": "User prompt",
+      "impact": "Artifact scope.",
+      "severity": "requirements",
+      "bindings": {
+        "outputs": [
+          "readings_raw",
+          "resolved_readings",
+          "hourly_health",
+          "hourly_comparison",
+          "late_quarantine"
+        ]
+      }
+    },
+    {
+      "key": "grain",
+      "value": "One logical reading per reading_id; physical repeats and corrected versions share identity.",
+      "status": "confirmed",
+      "source": "User prompt and answer",
+      "impact": "Identity resolution.",
+      "severity": "requirements",
+      "bindings": {}
+    },
+    {
+      "key": "metric",
+      "value": "Per machine and UTC event hour averages and independent valid/missing counts for temperature and vibration.",
+      "status": "confirmed",
+      "source": "User answer",
+      "impact": "Aggregation.",
+      "severity": "requirements",
+      "bindings": {
+        "operations": [
+          {
+            "kind": "filter",
+            "name": "eligible_readings",
+            "input": "readings_raw",
+            "predicate": "arrival_delay_minutes <= 120"
+          },
+          {
+            "kind": "deduplicate",
+            "name": "resolved_readings",
+            "input": "eligible_readings",
+            "keys": [
+              "reading_id"
+            ],
+            "order_by": [
+              {
+                "column": "reading_version",
+                "direction": "desc"
+              },
+              {
+                "column": "arrival_timestamp",
+                "direction": "desc"
+              }
+            ]
+          },
+          {
+            "kind": "derive",
+            "name": "resolved_with_hour",
+            "input": "resolved_readings",
+            "columns": [
+              {
+                "name": "event_hour",
+                "expression": "timestampadd(SECOND, -second(event_timestamp), timestampadd(MINUTE, -minute(event_timestamp), event_timestamp))"
+              }
+            ]
+          },
+          {
+            "kind": "aggregate",
+            "name": "hourly_health",
+            "input": "resolved_with_hour",
+            "group_by": [
+              "site_id",
+              "machine_id",
+              "event_hour"
+            ],
+            "measures": [
+              {
+                "name": "total_reading_count",
+                "expression": "count(*)"
+              },
+              {
+                "name": "valid_temperature_count",
+                "expression": "count(temperature_c)"
+              },
+              {
+                "name": "missing_temperature_count",
+                "expression": "sum(case when temperature_c is null then 1 else 0 end)"
+              },
+              {
+                "name": "avg_temperature_c",
+                "expression": "avg(temperature_c)"
+              },
+              {
+                "name": "valid_vibration_count",
+                "expression": "count(vibration_mm_s)"
+              },
+              {
+                "name": "missing_vibration_count",
+                "expression": "sum(case when vibration_mm_s is null then 1 else 0 end)"
+              },
+              {
+                "name": "avg_vibration_mm_s",
+                "expression": "avg(vibration_mm_s)"
+              }
+            ]
+          },
+          {
+            "kind": "filter",
+            "name": "reference_eligible",
+            "input": "readings_raw",
+            "predicate": "arrival_timestamp <= timestampadd(HOUR, 2, event_timestamp)"
+          },
+          {
+            "kind": "deduplicate",
+            "name": "reference_resolved",
+            "input": "reference_eligible",
+            "keys": [
+              "reading_id"
+            ],
+            "order_by": [
+              {
+                "column": "reading_version",
+                "direction": "desc"
+              },
+              {
+                "column": "arrival_timestamp",
+                "direction": "desc"
+              }
+            ]
+          },
+          {
+            "kind": "derive",
+            "name": "reference_with_hour",
+            "input": "reference_resolved",
+            "columns": [
+              {
+                "name": "event_hour",
+                "expression": "timestampadd(SECOND, -second(event_timestamp), timestampadd(MINUTE, -minute(event_timestamp), event_timestamp))"
+              }
+            ]
+          },
+          {
+            "kind": "aggregate",
+            "name": "hourly_reference",
+            "input": "reference_with_hour",
+            "group_by": [
+              "site_id",
+              "machine_id",
+              "event_hour"
+            ],
+            "measures": [
+              {
+                "name": "ref_total_reading_count",
+                "expression": "count(*)"
+              },
+              {
+                "name": "ref_valid_temperature_count",
+                "expression": "count(temperature_c)"
+              },
+              {
+                "name": "ref_missing_temperature_count",
+                "expression": "sum(case when temperature_c is null then 1 else 0 end)"
+              },
+              {
+                "name": "ref_avg_temperature_c",
+                "expression": "avg(temperature_c)"
+              },
+              {
+                "name": "ref_valid_vibration_count",
+                "expression": "count(vibration_mm_s)"
+              },
+              {
+                "name": "ref_missing_vibration_count",
+                "expression": "sum(case when vibration_mm_s is null then 1 else 0 end)"
+              },
+              {
+                "name": "ref_avg_vibration_mm_s",
+                "expression": "avg(vibration_mm_s)"
+              }
+            ]
+          },
+          {
+            "kind": "join",
+            "name": "hourly_comparison",
+            "left": "hourly_health",
+            "right": "hourly_reference",
+            "keys": [
+              "site_id",
+              "machine_id",
+              "event_hour"
+            ],
+            "how": "left",
+            "cardinality": "many_to_one"
+          },
+          {
+            "kind": "filter",
+            "name": "too_late_records",
+            "input": "readings_raw",
+            "predicate": "arrival_timestamp > timestampadd(HOUR, 2, event_timestamp)"
+          },
+          {
+            "kind": "derive",
+            "name": "late_quarantine",
+            "input": "too_late_records",
+            "columns": [
+              {
+                "name": "quarantine_reason",
+                "expression": "'arrival_after_two_hour_cutoff'"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "population",
+      "value": "Highest eligible version, latest arrival tie-break; arrivals after two hours quarantined.",
+      "status": "confirmed",
+      "source": "User answers",
+      "impact": "Eligibility.",
+      "severity": "requirements",
+      "bindings": {}
+    },
+    {
+      "key": "time",
+      "value": "Fixed UTC window 2026-01-01 through 2026-01-08; two-hour allowed lateness.",
+      "status": "delegated",
+      "source": "User unavailable; reproducibility default",
+      "impact": "Time boundaries.",
+      "severity": "requirements",
+      "bindings": {}
+    },
+    {
+      "key": "simulation",
+      "value": "10,000 base readings, 3 sites, 12 machines, one 45% volume machine, 5% missing temperature, 3% repeats, 2% corrections, 10% delayed and 1% too late.",
+      "status": "confirmed",
+      "source": "User prompt plus delegated numeric defaults",
+      "impact": "Synthetic evidence.",
+      "severity": "requirements",
+      "bindings": {
+        "tables": [
+          {
+            "name": "readings_raw",
+            "grain": "One physical reading record; repeated rows and corrected versions share reading_id",
+            "rows": 10000,
+            "primary_key": "reading_id",
+            "columns": [
+              {
+                "name": "reading_id",
+                "kind": "id"
+              },
+              {
+                "name": "machine_id",
+                "kind": "category",
+                "categories": [
+                  "machine_01",
+                  "machine_02",
+                  "machine_03",
+                  "machine_04",
+                  "machine_05",
+                  "machine_06",
+                  "machine_07",
+                  "machine_08",
+                  "machine_09",
+                  "machine_10",
+                  "machine_11",
+                  "machine_12"
+                ],
+                "weights": [
+                  0.45,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05,
+                  0.05
+                ]
+              },
+              {
+                "name": "site_id",
+                "kind": "expression",
+                "expression": "case when machine_id in ('machine_01','machine_02','machine_03','machine_04') then 'site_01' when machine_id in ('machine_05','machine_06','machine_07','machine_08') then 'site_02' else 'site_03' end"
+              },
+              {
+                "name": "event_timestamp",
+                "kind": "timestamp",
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-08T00:00:00Z"
+              },
+              {
+                "name": "reading_version",
+                "kind": "integer",
+                "minimum": 1,
+                "maximum": 1
+              },
+              {
+                "name": "temperature_c",
+                "kind": "decimal",
+                "minimum": 40,
+                "maximum": 100,
+                "null_rate": 0.05
+              },
+              {
+                "name": "vibration_mm_s",
+                "kind": "decimal",
+                "minimum": 0,
+                "maximum": 20
+              },
+              {
+                "name": "arrival_class",
+                "kind": "category",
+                "categories": [
+                  "on_time",
+                  "delayed",
+                  "too_late"
+                ],
+                "weights": [
+                  0.89,
+                  0.1,
+                  0.01
+                ]
+              },
+              {
+                "name": "arrival_delay_minutes",
+                "kind": "expression",
+                "expression": "case when arrival_class = 'delayed' then 90 when arrival_class = 'too_late' then 180 else 0 end"
+              },
+              {
+                "name": "arrival_timestamp",
+                "kind": "expression",
+                "expression": "timestampadd(MINUTE, arrival_delay_minutes, event_timestamp)"
+              },
+              {
+                "name": "microbatch_id",
+                "kind": "expression",
+                "expression": "floor(timestampdiff(SECOND, to_timestamp('2026-01-01T00:00:00Z'), arrival_timestamp) / 3600)"
+              }
+            ],
+            "duplicate_rate": 0.03,
+            "changed_duplicate_rate": 0.02,
+            "version_column": "reading_version",
+            "duplicate_changes": {
+              "temperature_c": "temperature_c + 1.5",
+              "vibration_mm_s": "vibration_mm_s + 0.25",
+              "arrival_delay_minutes": "arrival_delay_minutes + 30",
+              "arrival_timestamp": "timestampadd(MINUTE, 30, arrival_timestamp)",
+              "microbatch_id": "microbatch_id + 1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "key": "quality",
+      "value": "Deterministic version resolution and reason-coded late quarantine.",
+      "status": "confirmed",
+      "source": "User answers",
+      "impact": "Clean contract.",
+      "severity": "requirements",
+      "bindings": {}
+    },
+    {
+      "key": "acceptance",
+      "value": "Exact reference equality, identity uniqueness, population reconciliation, anomaly bounds.",
+      "status": "confirmed",
+      "source": "User answer",
+      "impact": "Executable success.",
+      "severity": "requirements",
+      "bindings": {
+        "checks": [
+          {
+            "name": "raw_physical_row_count",
+            "kind": "row_count",
+            "table": "readings_raw",
+            "expected": 10500
+          },
+          {
+            "name": "raw_temperature_null_rate",
+            "kind": "null_rate",
+            "table": "readings_raw",
+            "columns": [
+              "temperature_c"
+            ],
+            "expected": 0.05,
+            "tolerance": 0.02
+          },
+          {
+            "name": "resolved_logical_identity",
+            "kind": "unique",
+            "table": "resolved_readings",
+            "columns": [
+              "reading_id"
+            ]
+          },
+          {
+            "name": "resolved_population_bounds",
+            "kind": "row_count",
+            "table": "resolved_readings",
+            "minimum": 9500,
+            "maximum": 10000
+          },
+          {
+            "name": "hourly_metric_reconciliation",
+            "kind": "predicate",
+            "table": "hourly_health",
+            "predicate": "total_reading_count = valid_temperature_count + missing_temperature_count and total_reading_count = valid_vibration_count + missing_vibration_count",
+            "maximum_failures": 0
+          },
+          {
+            "name": "hourly_reference_exact_match",
+            "kind": "predicate",
+            "table": "hourly_comparison",
+            "predicate": "total_reading_count = ref_total_reading_count and valid_temperature_count = ref_valid_temperature_count and missing_temperature_count = ref_missing_temperature_count and coalesce(avg_temperature_c, -9999) = coalesce(ref_avg_temperature_c, -9999) and valid_vibration_count = ref_valid_vibration_count and missing_vibration_count = ref_missing_vibration_count and coalesce(avg_vibration_mm_s, -9999) = coalesce(ref_avg_vibration_mm_s, -9999)",
+            "maximum_failures": 0
+          },
+          {
+            "name": "late_quarantine_present",
+            "kind": "row_count",
+            "table": "late_quarantine",
+            "minimum": 1,
+            "maximum": 500
+          },
+          {
+            "name": "late_quarantine_reason",
+            "kind": "predicate",
+            "table": "late_quarantine",
+            "predicate": "quarantine_reason = 'arrival_after_two_hour_cutoff' and arrival_timestamp > timestampadd(HOUR, 2, event_timestamp)",
+            "maximum_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "key": "pipeline",
+      "value": "bounded batch",
+      "status": "confirmed",
+      "source": "User answer and supported-scope boundary",
+      "impact": "Execution semantics.",
+      "severity": "requirements",
+      "bindings": {}
+    },
+    {
+      "key": "persistence",
+      "value": "Disabled by default and runtime opt-in only.",
+      "status": "confirmed",
+      "source": "User prompt",
+      "impact": "Write safety.",
+      "severity": "runtime",
+      "bindings": {}
+    }
+  ],
+  "provisional": false,
+  "provisional_reason": "",
+  "verify_reproducibility": true,
+  "scenario": "pipeline",
+  "tables": [
+    {
+      "name": "readings_raw",
+      "grain": "One physical reading record; repeated rows and corrected versions share reading_id",
+      "rows": 10000,
+      "primary_key": "reading_id",
+      "columns": [
+        {
+          "name": "reading_id",
+          "kind": "id",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": null
+        },
+        {
+          "name": "machine_id",
+          "kind": "category",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [
+            "machine_01",
+            "machine_02",
+            "machine_03",
+            "machine_04",
+            "machine_05",
+            "machine_06",
+            "machine_07",
+            "machine_08",
+            "machine_09",
+            "machine_10",
+            "machine_11",
+            "machine_12"
+          ],
+          "weights": [
+            0.45,
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05,
+            0.05
+          ],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": null
+        },
+        {
+          "name": "site_id",
+          "kind": "expression",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": "case when machine_id in ('machine_01','machine_02','machine_03','machine_04') then 'site_01' when machine_id in ('machine_05','machine_06','machine_07','machine_08') then 'site_02' else 'site_03' end"
+        },
+        {
+          "name": "event_timestamp",
+          "kind": "timestamp",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": "2026-01-01T00:00:00Z",
+          "end": "2026-01-08T00:00:00Z",
+          "reference_table": null,
+          "expression": null
+        },
+        {
+          "name": "reading_version",
+          "kind": "integer",
+          "minimum": 1,
+          "maximum": 1,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": null
+        },
+        {
+          "name": "temperature_c",
+          "kind": "decimal",
+          "minimum": 40,
+          "maximum": 100,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.05,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": null
+        },
+        {
+          "name": "vibration_mm_s",
+          "kind": "decimal",
+          "minimum": 0,
+          "maximum": 20,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": null
+        },
+        {
+          "name": "arrival_class",
+          "kind": "category",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [
+            "on_time",
+            "delayed",
+            "too_late"
+          ],
+          "weights": [
+            0.89,
+            0.1,
+            0.01
+          ],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": null
+        },
+        {
+          "name": "arrival_delay_minutes",
+          "kind": "expression",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": "case when arrival_class = 'delayed' then 90 when arrival_class = 'too_late' then 180 else 0 end"
+        },
+        {
+          "name": "arrival_timestamp",
+          "kind": "expression",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": "timestampadd(MINUTE, arrival_delay_minutes, event_timestamp)"
+        },
+        {
+          "name": "microbatch_id",
+          "kind": "expression",
+          "minimum": 0,
+          "maximum": 100,
+          "categories": [],
+          "weights": [],
+          "true_rate": 0.5,
+          "null_rate": 0.0,
+          "start": null,
+          "end": null,
+          "reference_table": null,
+          "expression": "floor(timestampdiff(SECOND, to_timestamp('2026-01-01T00:00:00Z'), arrival_timestamp) / 3600)"
+        }
+      ],
+      "duplicate_rate": 0.03,
+      "changed_duplicate_rate": 0.02,
+      "version_column": "reading_version",
+      "duplicate_changes": {
+        "temperature_c": "temperature_c + 1.5",
+        "vibration_mm_s": "vibration_mm_s + 0.25",
+        "arrival_delay_minutes": "arrival_delay_minutes + 30",
+        "arrival_timestamp": "timestampadd(MINUTE, 30, arrival_timestamp)",
+        "microbatch_id": "microbatch_id + 1"
+      }
+    }
+  ],
+  "operations": [
+    {
+      "kind": "filter",
+      "name": "eligible_readings",
+      "input": "readings_raw",
+      "predicate": "arrival_delay_minutes <= 120"
+    },
+    {
+      "kind": "deduplicate",
+      "name": "resolved_readings",
+      "input": "eligible_readings",
+      "keys": [
+        "reading_id"
+      ],
+      "order_by": [
+        {
+          "column": "reading_version",
+          "direction": "desc"
+        },
+        {
+          "column": "arrival_timestamp",
+          "direction": "desc"
+        }
+      ]
+    },
+    {
+      "kind": "derive",
+      "name": "resolved_with_hour",
+      "input": "resolved_readings",
+      "columns": [
+        {
+          "name": "event_hour",
+          "expression": "timestampadd(SECOND, -second(event_timestamp), timestampadd(MINUTE, -minute(event_timestamp), event_timestamp))"
+        }
+      ]
+    },
+    {
+      "kind": "aggregate",
+      "name": "hourly_health",
+      "input": "resolved_with_hour",
+      "group_by": [
+        "site_id",
+        "machine_id",
+        "event_hour"
+      ],
+      "measures": [
+        {
+          "name": "total_reading_count",
+          "expression": "count(*)"
+        },
+        {
+          "name": "valid_temperature_count",
+          "expression": "count(temperature_c)"
+        },
+        {
+          "name": "missing_temperature_count",
+          "expression": "sum(case when temperature_c is null then 1 else 0 end)"
+        },
+        {
+          "name": "avg_temperature_c",
+          "expression": "avg(temperature_c)"
+        },
+        {
+          "name": "valid_vibration_count",
+          "expression": "count(vibration_mm_s)"
+        },
+        {
+          "name": "missing_vibration_count",
+          "expression": "sum(case when vibration_mm_s is null then 1 else 0 end)"
+        },
+        {
+          "name": "avg_vibration_mm_s",
+          "expression": "avg(vibration_mm_s)"
+        }
+      ]
+    },
+    {
+      "kind": "filter",
+      "name": "reference_eligible",
+      "input": "readings_raw",
+      "predicate": "arrival_timestamp <= timestampadd(HOUR, 2, event_timestamp)"
+    },
+    {
+      "kind": "deduplicate",
+      "name": "reference_resolved",
+      "input": "reference_eligible",
+      "keys": [
+        "reading_id"
+      ],
+      "order_by": [
+        {
+          "column": "reading_version",
+          "direction": "desc"
+        },
+        {
+          "column": "arrival_timestamp",
+          "direction": "desc"
+        }
+      ]
+    },
+    {
+      "kind": "derive",
+      "name": "reference_with_hour",
+      "input": "reference_resolved",
+      "columns": [
+        {
+          "name": "event_hour",
+          "expression": "timestampadd(SECOND, -second(event_timestamp), timestampadd(MINUTE, -minute(event_timestamp), event_timestamp))"
+        }
+      ]
+    },
+    {
+      "kind": "aggregate",
+      "name": "hourly_reference",
+      "input": "reference_with_hour",
+      "group_by": [
+        "site_id",
+        "machine_id",
+        "event_hour"
+      ],
+      "measures": [
+        {
+          "name": "ref_total_reading_count",
+          "expression": "count(*)"
+        },
+        {
+          "name": "ref_valid_temperature_count",
+          "expression": "count(temperature_c)"
+        },
+        {
+          "name": "ref_missing_temperature_count",
+          "expression": "sum(case when temperature_c is null then 1 else 0 end)"
+        },
+        {
+          "name": "ref_avg_temperature_c",
+          "expression": "avg(temperature_c)"
+        },
+        {
+          "name": "ref_valid_vibration_count",
+          "expression": "count(vibration_mm_s)"
+        },
+        {
+          "name": "ref_missing_vibration_count",
+          "expression": "sum(case when vibration_mm_s is null then 1 else 0 end)"
+        },
+        {
+          "name": "ref_avg_vibration_mm_s",
+          "expression": "avg(vibration_mm_s)"
+        }
+      ]
+    },
+    {
+      "kind": "join",
+      "name": "hourly_comparison",
+      "left": "hourly_health",
+      "right": "hourly_reference",
+      "keys": [
+        "site_id",
+        "machine_id",
+        "event_hour"
+      ],
+      "how": "left",
+      "cardinality": "many_to_one"
+    },
+    {
+      "kind": "filter",
+      "name": "too_late_records",
+      "input": "readings_raw",
+      "predicate": "arrival_timestamp > timestampadd(HOUR, 2, event_timestamp)"
+    },
+    {
+      "kind": "derive",
+      "name": "late_quarantine",
+      "input": "too_late_records",
+      "columns": [
+        {
+          "name": "quarantine_reason",
+          "expression": "'arrival_after_two_hour_cutoff'"
+        }
+      ]
+    }
+  ],
+  "outputs": [
+    "readings_raw",
+    "resolved_readings",
+    "hourly_health",
+    "hourly_comparison",
+    "late_quarantine"
+  ],
+  "checks": [
+    {
+      "name": "raw_physical_row_count",
+      "kind": "row_count",
+      "table": "readings_raw",
+      "columns": [],
+      "expected": 10500,
+      "minimum": null,
+      "maximum": null,
+      "tolerance": 0.0,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": null,
+      "maximum_failures": 0
+    },
+    {
+      "name": "raw_temperature_null_rate",
+      "kind": "null_rate",
+      "table": "readings_raw",
+      "columns": [
+        "temperature_c"
+      ],
+      "expected": 0.05,
+      "minimum": null,
+      "maximum": null,
+      "tolerance": 0.02,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": null,
+      "maximum_failures": 0
+    },
+    {
+      "name": "resolved_logical_identity",
+      "kind": "unique",
+      "table": "resolved_readings",
+      "columns": [
+        "reading_id"
+      ],
+      "expected": null,
+      "minimum": null,
+      "maximum": null,
+      "tolerance": 0.0,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": null,
+      "maximum_failures": 0
+    },
+    {
+      "name": "resolved_population_bounds",
+      "kind": "row_count",
+      "table": "resolved_readings",
+      "columns": [],
+      "expected": null,
+      "minimum": 9500,
+      "maximum": 10000,
+      "tolerance": 0.0,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": null,
+      "maximum_failures": 0
+    },
+    {
+      "name": "hourly_metric_reconciliation",
+      "kind": "predicate",
+      "table": "hourly_health",
+      "columns": [],
+      "expected": null,
+      "minimum": null,
+      "maximum": null,
+      "tolerance": 0.0,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": "total_reading_count = valid_temperature_count + missing_temperature_count and total_reading_count = valid_vibration_count + missing_vibration_count",
+      "maximum_failures": 0
+    },
+    {
+      "name": "hourly_reference_exact_match",
+      "kind": "predicate",
+      "table": "hourly_comparison",
+      "columns": [],
+      "expected": null,
+      "minimum": null,
+      "maximum": null,
+      "tolerance": 0.0,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": "total_reading_count = ref_total_reading_count and valid_temperature_count = ref_valid_temperature_count and missing_temperature_count = ref_missing_temperature_count and coalesce(avg_temperature_c, -9999) = coalesce(ref_avg_temperature_c, -9999) and valid_vibration_count = ref_valid_vibration_count and missing_vibration_count = ref_missing_vibration_count and coalesce(avg_vibration_mm_s, -9999) = coalesce(ref_avg_vibration_mm_s, -9999)",
+      "maximum_failures": 0
+    },
+    {
+      "name": "late_quarantine_present",
+      "kind": "row_count",
+      "table": "late_quarantine",
+      "columns": [],
+      "expected": null,
+      "minimum": 1,
+      "maximum": 500,
+      "tolerance": 0.0,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": null,
+      "maximum_failures": 0
+    },
+    {
+      "name": "late_quarantine_reason",
+      "kind": "predicate",
+      "table": "late_quarantine",
+      "columns": [],
+      "expected": null,
+      "minimum": null,
+      "maximum": null,
+      "tolerance": 0.0,
+      "reference_table": null,
+      "reference_columns": [],
+      "predicate": "quarantine_reason = 'arrival_after_two_hour_cutoff' and arrival_timestamp > timestampadd(HOUR, 2, event_timestamp)",
+      "maximum_failures": 0
+    }
+  ],
+  "scale_acknowledged": false
+}
