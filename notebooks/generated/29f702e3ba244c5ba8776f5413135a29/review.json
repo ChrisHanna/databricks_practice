@@ -1,0 +1,51 @@
+{
+  "syntax_valid": true,
+  "executed": false,
+  "findings": [
+    {
+      "code": "io_or_query",
+      "severity": "medium",
+      "line": 345,
+      "message": "Review this IO/query boundary, exact targets, inputs and write behavior."
+    },
+    {
+      "code": "growing_plan",
+      "severity": "medium",
+      "line": 136,
+      "message": "Repeated column/union construction can grow the plan; review projections."
+    },
+    {
+      "code": "growing_plan",
+      "severity": "medium",
+      "line": 141,
+      "message": "Repeated column/union construction can grow the plan; review projections."
+    },
+    {
+      "code": "growing_plan",
+      "severity": "medium",
+      "line": 147,
+      "message": "Repeated column/union construction can grow the plan; review projections."
+    },
+    {
+      "code": "growing_plan",
+      "severity": "medium",
+      "line": 162,
+      "message": "Repeated column/union construction can grow the plan; review projections."
+    },
+    {
+      "code": "growing_plan",
+      "severity": "medium",
+      "line": 192,
+      "message": "Repeated column/union construction can grow the plan; review projections."
+    },
+    {
+      "code": "repeated_actions",
+      "severity": "medium",
+      "line": null,
+      "message": "Found 13 action-like calls; review repeated scans and reuse tradeoffs."
+    }
+  ],
+  "findings_truncated": false,
+  "action_like_calls": 13,
+  "limitations": "Static heuristics may miss aliases, dynamic SQL, indirect IO, variable limits and runtime behavior. A clean report is not a sandbox, correctness proof or scale benchmark. Review source, requirements, execution plans and runtime evidence before execution."
+}
