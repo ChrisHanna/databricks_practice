@@ -1,0 +1,14 @@
+{
+  "artifact_id": "0ce78c07b11a464ba0cbc2d41395bd0c",
+  "files": {
+    "notebook.ipynb": "2db1a5888bb22840dcd55de751be1e3d8663a2383ff8f6b1b39a1ebae8e9d443",
+    "notebook.py": "dc1ff40bae9ee593129823868a84e63d942b43ab095f15d56f317631da06ac34",
+    "read_delta.ipynb": "b76bdfce410be837d5c73a9e5fc5184e4a38a06bffded290c000f28d096a3567",
+    "read_delta.py": "1ac7a109a39a327ff30e1d7f81d0fe0ed67b66dfefb69ef3f2580d7336bf375d",
+    "review.json": "081a8fc30a075c9a5f96b1f8121c225a6628a110d97ca803fdf5a0376959f018",
+    "spec.json": "d3d7e61bb733b5dcbca57cab899c7d65c975f24591d6664548eb93b3dbf16b1a"
+  },
+  "generator_version": "0.1.0",
+  "source_sha256": "dc1ff40bae9ee593129823868a84e63d942b43ab095f15d56f317631da06ac34",
+  "spec_fingerprint": "0268972c86dc651f85506684e2e34af0bbf4a9826ccf5d76a08d62acd1550f6c"
+}
